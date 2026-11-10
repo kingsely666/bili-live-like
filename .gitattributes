@@ -1,0 +1,7 @@
+# 统一换行符，避免 Windows 下 checkout 出 CRLF 污染脚本
+* text=auto eol=lf
+
+# 二进制资源不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
