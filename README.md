@@ -23,7 +23,7 @@
    - GitHub：[raw.githubusercontent.com](https://raw.githubusercontent.com/kingsely666/bili-live-like/main/bili-live-like.user.js)
 3. 打开任意直播间，脚本自动生效
 
-> 装好后在 Tampermonkey 管理面板确认 `B站直播间点赞助手（手动版）` 已启用，版本号应为 `2.2.2`。
+> 装好后在 Tampermonkey 管理面板确认「B站直播间点赞助手」已启用。
 
 ## 使用
 
@@ -67,6 +67,7 @@ B 站点赞数本身有服务端同步延迟，脚本只负责提交请求，最
 
 ## 更新日志
 
+- **2.2.3** 更名为「B站直播间点赞助手」，补充 MIT 许可声明，精简描述以适配 Greasy Fork
 - **2.2.2** 记录结构拆分 `used` / `total`：重置只清配额进度，当日累计统计保留，兼容旧版数据
 - **2.2.1** 修复面板底部状态栏被圆角裁切
 - **2.2.0** 明细行显示主播名与房间号，展开时面板加宽
