@@ -18,8 +18,12 @@
 ## 安装
 
 1. 给浏览器装一个用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox / Safari 均有）
-2. 点这里安装脚本：[bili-live-like.user.js](https://raw.githubusercontent.com/kingsely666/bili-live-like/main/bili-live-like.user.js)
+2. 安装脚本，两个地址任选（前者国内可直连）：
+   - CDN：[bili-live-like.user.js](https://cdn.jsdelivr.net/gh/kingsely666/bili-live-like@main/bili-live-like.user.js)
+   - GitHub：[raw.githubusercontent.com](https://raw.githubusercontent.com/kingsely666/bili-live-like/main/bili-live-like.user.js)
 3. 打开任意直播间，脚本自动生效
+
+> 装好后在 Tampermonkey 管理面板确认 `B站直播间点赞助手（手动版）` 已启用，版本号应为 `2.2.2`。
 
 ## 使用
 

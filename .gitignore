@@ -14,5 +14,8 @@ desktop.ini
 _*.js
 _*.png
 
+# 本地测试截图（探针产物，不入库）
+bili-like-*.png
+
 # 本地工作区数据（含项目记忆，不发布）
 .workbuddy/
