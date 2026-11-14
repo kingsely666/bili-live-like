@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.2.3
-// @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
+// @version      2.3.0
+// @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
 // @match        https://live.bilibili.com/*
@@ -26,6 +26,8 @@
   const HOST_ID = 'wb-bili-like-host';
   const PANEL_ID = 'wb-bili-like-panel';
   const STYLE_ID = 'wb-bili-like-style';
+  // 原生按钮的状态标记样式单独用一个 id，避免被 cleanupStaleDom 的旧节点清理误删
+  const NATIVE_STYLE_ID = 'wb-bili-like-native';
   // @grant none 时脚本直接跑在页面上下文，可直接读到 BilibiliLive
   const page = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -607,6 +609,60 @@
     try { return target.closest(NATIVE_LIKE_SELECTOR); } catch (error) { return null; }
   }
 
+  // ---------------------------------------------------------------------------
+  // 自动点赞开启后的视觉标记：在原生点赞按钮上冒气泡，看起来像一直在点赞。
+  // 关闭时按钮保持 100% 原生外观，不加任何 class / 属性 / 子节点。
+  // 只用 CSS 伪元素画圆点，content 恒为空字符串 —— 不会产生可被页面读到的文字。
+  // ---------------------------------------------------------------------------
+  const AUTO_FLAG_ATTR = 'data-wb-auto';
+
+  function injectNativeStyle() {
+    if (document.getElementById(NATIVE_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = NATIVE_STYLE_ID;
+    // 选择器全部以 [data-wb-auto="on"] 开头：只有本脚本打过标记的按钮才会命中，
+    // 不会影响页面上其它同名元素。
+    style.textContent = [
+      '[data-wb-auto="on"]{position:relative!important;overflow:visible!important}',
+      '[data-wb-auto="on"]::before,[data-wb-auto="on"]::after{',
+      'content:""!important;position:absolute!important;',
+      'top:62%!important;width:7px;height:7px;',
+      'margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#fb7299;',
+      'opacity:0;pointer-events:none!important;z-index:3;',
+      'box-shadow:0 0 7px rgba(251,114,153,.6);',
+      'animation:wb-like-bubble 1.5s cubic-bezier(.25,.7,.35,1) infinite;',
+      'will-change:transform,opacity}',
+      '[data-wb-auto="on"]::before{left:19%!important}',
+      '[data-wb-auto="on"]::after{left:31%!important;animation-delay:.75s}',
+      '@keyframes wb-like-bubble{',
+      '0%{transform:translateY(5px) scale(.45);opacity:0}',
+      '15%{transform:translateY(0) scale(1);opacity:.95}',
+      '70%{opacity:.5}',
+      '100%{transform:translateY(-19px) scale(1.3);opacity:0}}',
+      '@media (prefers-reduced-motion:reduce){',
+      '[data-wb-auto="on"]::before,[data-wb-auto="on"]::after{',
+      'animation:none;opacity:.9;transform:translateY(-6px) scale(.85)}}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  // 按当前直播间的自动开关给按钮打标记；状态没变就不碰 DOM，每秒调用也没有写放大
+  let nativeStyleReady = false;
+  function syncNativeBadge() {
+    if (!nativeStyleReady) {
+      injectNativeStyle();
+      nativeStyleReady = true;
+    }
+    const btn = nativeBtn();
+    if (!btn) return;
+    const on = !!autoEnabled(roomIdFromUrl());
+    if (on) {
+      if (btn.getAttribute(AUTO_FLAG_ATTR) !== 'on') btn.setAttribute(AUTO_FLAG_ATTR, 'on');
+    } else if (btn.hasAttribute(AUTO_FLAG_ATTR)) {
+      btn.removeAttribute(AUTO_FLAG_ATTR);
+    }
+  }
+
   function anchorRect() {
     const btn = nativeBtn();
     if (!btn || typeof btn.getBoundingClientRect !== 'function') return null;
@@ -1158,12 +1214,14 @@
     autoBox.checked = autoEnabled(room);
     applyConfig(room);
     updateTodayLabel(room);
+    syncNativeBadge();
   }
 
   autoBox.addEventListener('change', () => {
     const room = roomIdFromUrl();
     setRoomAuto(room, autoBox.checked);
     setStatus((autoBox.checked ? '自动已开启' : '自动已关闭') + '（仅本房）');
+    syncNativeBadge();
     if (autoBox.checked && room && !running) scheduleAuto(0);
   });
 
@@ -1187,6 +1245,7 @@
       autoState.defaultEnabled = settings.defaultEnabled;
       autoState.enabledByRoom = settings.enabledByRoom;
       autoBox.checked = autoEnabled(roomIdFromUrl());
+      syncNativeBadge();
     }
   });
 
@@ -1350,6 +1409,8 @@
   let lastPath = location.pathname;
   setInterval(() => {
     cleanupStaleDom();
+    // Vue 切房重建聊天栏后，按钮是新节点、标记会丢，这里补回；状态没变则不写 DOM
+    syncNativeBadge();
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
 
