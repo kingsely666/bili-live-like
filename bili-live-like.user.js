@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.4.1
-// @description  在 B 站直播间原生点赞按钮上右键打开紧凑设置面板，点「开始」跑批量点赞（左键保持原生，不触发任务）；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
+// @version      2.4.2
+// @description  在 B 站直播间原生点赞按钮上右键打开紧凑设置面板，点「开始」按面板参数批量点赞；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
 // @match        https://live.bilibili.com/*
@@ -16,7 +16,7 @@
 // 1. @namespace 必须保持 workbuddy.local/bili-like 不变，Tampermonkey 才认作同一个脚本、
 //    能原地升级；改成 greasyfork.org/users/xxx 会被当成新脚本，与本地版并存两份。
 // 2. @description 只放一句话（列表页会截断），详细说明请填在 Greasy Fork 表单的「附加信息」里。
-// 3. 在 Greasy Fork 页面编辑代码后，必须把 @version 往上加（2.2.2 → 2.2.3）才会推送更新。
+// 3. 每次发布都要把 @version 往上加，Greasy Fork 才会推送更新。
 // 4. @downloadURL / @updateURL 由 Greasy Fork 自动注入，不用手写。
 
 (function () {
@@ -551,7 +551,7 @@
     <div class="wb-today"><span id="wb-today">本房 0 / 300</span><button type="button" class="wb-link" id="wb-reset" title="只清本房配额进度，当日累计统计保留">重置</button></div>
     <div class="wb-total" id="wb-total" role="button" tabindex="0" aria-expanded="false" title="当日所有直播间点赞总数，点击展开逐房间明细"><span>全站今日 <b class="wb-total-num" id="wb-total-num">0</b> 赞 <span class="wb-total-caret">▼</span></span><span><b id="wb-total-rooms">0</b> 间</span></div>
     <div class="wb-total-list" id="wb-total-list" hidden></div>
-    <div class="wb-btns"><button type="button" id="wb-start" title="从这里发起点赞任务；左键点原生按钮不会触发">开始</button><button type="button" id="wb-stop" disabled>停止</button></div>
+    <div class="wb-btns"><button type="button" id="wb-start" title="按面板参数发起一次批量点赞任务">开始</button><button type="button" id="wb-stop" disabled>停止</button></div>
     <div class="wb-status" id="wb-status">待机</div>
   </div>`;
   // 只挂进 Shadow Root：面板文字与样式都留在隔离树里，不会泄漏到页面正文
@@ -989,7 +989,7 @@
     $(selector).addEventListener('change', saveConfig);
   });
 
-  console.log('[点赞助手] 已集成到原生点赞按钮：左键=仅 B 站原生点赞（不接管），右键=打开设置面板，任务由面板「开始」发起');
+  console.log('[点赞助手] 已集成到原生点赞按钮：右键=打开设置面板，任务由面板「开始」发起');
 
   // ---------------------------------------------------------------------------
   // 自动任务：开关按「URL 房间号」分别记忆，未单独设置过的房间沿用 defaultEnabled
