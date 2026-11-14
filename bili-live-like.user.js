@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.3.1
-// @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
+// @version      2.4.0
+// @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
 // @match        https://live.bilibili.com/*
@@ -419,8 +419,9 @@
   --wb-shadow:0 16px 40px rgba(0,0,0,.16),0 4px 12px rgba(0,0,0,.10);
   color-scheme:light
 }
-@media (prefers-color-scheme:dark){
-:host{
+/* 深浅色不再由 @media 直接决定：JS 把「跟随系统 / 日间 / 夜间」解析成 light|dark 写到 host 的
+   data-theme 上，样式只认这一个属性。这样手动切换与系统主题不会互相打架（系统深色 + 手动日间也成立）。 */
+:host([data-theme="dark"]){
   --wb-accent:#60cdff;--wb-accent-hover:#7fd7ff;--wb-accent-press:#2fb2ee;--wb-accent-fg:#00304d;
   --wb-text:#f4f4f6;--wb-text-sub:#bdbdc6;
   --wb-surface:rgba(39,39,43,.93);--wb-surface-2:rgba(255,255,255,.10);--wb-surface-3:rgba(255,255,255,.07);
@@ -432,7 +433,6 @@
   --wb-shadow:0 18px 44px rgba(0,0,0,.52),0 4px 14px rgba(0,0,0,.38);
   color-scheme:dark
 }
-}
 /* 面板默认完全隐藏：页面上没有任何常驻的自制 UI。
    只有右键原生点赞按钮才出现，位置由 JS 按按钮矩形计算，不可拖动、不记位置。 */
 #${PANEL_ID}{position:fixed;left:0;top:0;z-index:99999;width:180px;background:var(--wb-surface);color:var(--wb-text);border:1px solid var(--wb-hairline);border-radius:10px;box-shadow:var(--wb-shadow),0 0 0 1px var(--wb-stroke);-webkit-backdrop-filter:blur(30px) saturate(1.8);backdrop-filter:blur(30px) saturate(1.8);font:12px/1.4 "Segoe UI Variable Text","Segoe UI Variable","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;overflow:hidden;visibility:hidden;opacity:0;pointer-events:none}
@@ -443,9 +443,18 @@
 .wb-head{display:flex;align-items:center;gap:6px;padding:7px 7px 7px 9px;background:var(--wb-surface-3);border-bottom:1px solid var(--wb-stroke);font-size:11.5px;font-weight:600;letter-spacing:.1px;cursor:default;user-select:none}
 .wb-head::before{content:"";flex:none;width:11px;height:11px;border-radius:3px;background:linear-gradient(150deg,var(--wb-accent),rgba(15,108,189,.55));box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 1px 3px rgba(0,0,0,.15)}
 .wb-title{color:var(--wb-text)}
-.wb-close{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--wb-text-sub);font:400 15px/1 "Segoe UI",sans-serif;cursor:pointer;transition:background-color .15s,color .15s}
-.wb-close:hover{background:var(--wb-hover);color:var(--wb-text)}
+/* 头部右侧两枚小按钮：主题切换在左、关闭在右，尺寸与圆角一致，hover 反馈统一 */
+.wb-theme,.wb-close{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--wb-text-sub);cursor:pointer;transition:background-color .15s,color .15s}
+.wb-theme:hover,.wb-close:hover{background:var(--wb-hover);color:var(--wb-text)}
+.wb-theme:focus-visible,.wb-close:focus-visible{outline:2px solid var(--wb-accent);outline-offset:1px}
+.wb-theme{margin-left:auto}
+.wb-close{font:400 15px/1 "Segoe UI",sans-serif}
 .wb-close::after{content:attr(data-label)}
+/* 三态图标只显示当前那个：auto=半圆（跟随系统）light=太阳 dark=月亮；颜色全部继承 currentColor */
+.wb-ico{display:none;width:12px;height:12px}
+.wb-theme[data-mode="auto"] .wb-ico-auto,
+.wb-theme[data-mode="light"] .wb-ico-light,
+.wb-theme[data-mode="dark"] .wb-ico-dark{display:block}
 .wb-body{padding:8px}
 .wb-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:6px}
 .wb-row label{color:var(--wb-text-sub);font-size:11.5px;white-space:nowrap}
@@ -533,7 +542,7 @@
   const panel = document.createElement('div');
   panel.id = PANEL_ID;
   panel.innerHTML = `
-  <div class="wb-head"><span class="wb-title">点赞助手</span><button type="button" class="wb-close" data-label="×" title="关闭"></button></div>
+  <div class="wb-head"><span class="wb-title">点赞助手</span><button type="button" class="wb-theme" data-mode="auto" title="面板主题：跟随系统（点击切到日间）" aria-label="切换面板主题"><svg class="wb-ico wb-ico-auto" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 1.7a4.3 4.3 0 0 1 0 8.6z" fill="currentColor"/></svg><svg class="wb-ico wb-ico-light" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.5" fill="currentColor"/><path d="M6 .9v1.5M6 9.6v1.5M.9 6h1.5M9.6 6h1.5M2.4 2.4l1.1 1.1M8.5 8.5l1.1 1.1M9.6 2.4l-1.1 1.1M3.5 8.5L2.4 9.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg><svg class="wb-ico wb-ico-dark" viewBox="0 0 12 12" aria-hidden="true"><defs><mask id="wb-theme-moon"><rect width="12" height="12" fill="#fff"/><circle cx="8.9" cy="3.1" r="4.3" fill="#000"/></mask></defs><circle cx="6" cy="6" r="5" fill="currentColor" mask="url(#wb-theme-moon)"/></svg></button><button type="button" class="wb-close" data-label="×" title="关闭"></button></div>
   <div class="wb-body">
     <div class="wb-row"><label>次数</label><input id="wb-times" type="number" min="1" max="100" value="10"></div>
     <div class="wb-row"><label>每次</label><input id="wb-per" type="number" min="1" max="300" value="30"></div>
@@ -566,6 +575,59 @@
   const totalRoomsEl = $('#wb-total-rooms');
   const totalListEl = $('#wb-total-list');
   const resetBtn = $('#wb-reset');
+  const themeBtn = $('.wb-theme');
+
+  // ---------------------------------------------------------------------------
+  // 面板主题：跟随系统 / 日间 / 夜间 三态循环，只影响脚本自己的浮层，不动 B 站页面。
+  // 选择存在 localStorage，跨直播间、跨刷新都生效；跟随系统时监听系统主题实时跟随。
+  // ---------------------------------------------------------------------------
+  const THEME_KEY = 'wb-bili-like-theme';
+  const THEME_ORDER = ['auto', 'light', 'dark'];
+  const THEME_TITLE = {
+    auto: '面板主题：跟随系统（点击切到日间）',
+    light: '面板主题：日间（点击切到夜间）',
+    dark: '面板主题：夜间（点击回到跟随系统）'
+  };
+  const darkQuery = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+
+  function readThemeMode() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(THEME_KEY) || 'null');
+      return THEME_ORDER.indexOf(saved) === -1 ? 'auto' : saved;
+    } catch (error) {
+      return 'auto';
+    }
+  }
+
+  let themeMode = readThemeMode();
+
+  // 解析结果写到 host 的 data-theme，样式表据此选颜色变量（面板与提示胶囊同在 shadow 里，一起切换）
+  function applyTheme() {
+    const dark = themeMode === 'dark' || (themeMode === 'auto' && !!darkQuery && darkQuery.matches);
+    host.dataset.theme = dark ? 'dark' : 'light';
+    themeBtn.dataset.mode = themeMode;
+    themeBtn.title = THEME_TITLE[themeMode];
+  }
+
+  themeBtn.addEventListener('click', () => {
+    themeMode = THEME_ORDER[(THEME_ORDER.indexOf(themeMode) + 1) % THEME_ORDER.length];
+    try {
+      localStorage.setItem(THEME_KEY, JSON.stringify(themeMode));
+    } catch (error) {
+      /* 隐私模式下写入失败：本次会话内仍然生效，只是记不住 */
+    }
+    applyTheme();
+  });
+
+  if (darkQuery) {
+    const onSchemeChange = () => { if (themeMode === 'auto') applyTheme(); };
+    if (typeof darkQuery.addEventListener === 'function') darkQuery.addEventListener('change', onSchemeChange);
+    else if (typeof darkQuery.addListener === 'function') darkQuery.addListener(onSchemeChange);
+  }
+
+  applyTheme();
 
   let running = false;
   let stopFlag = false;
