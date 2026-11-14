@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.3.0
+// @version      2.3.1
 // @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
@@ -571,6 +571,8 @@
   let stopFlag = false;
   let panelOpen = false;
   let toastTimer = null;
+  // 提示胶囊是否可见：滚动/缩放时据此早退，隐藏状态下不做任何位置计算
+  let toastVisible = false;
 
   // 面板默认隐藏，所以任务反馈要能独立显示：状态同时写进面板状态栏
   // 和贴在原生按钮上方的临时胶囊，胶囊数秒后自动消失，不留任何常驻 UI。
@@ -581,9 +583,13 @@
     if (silent || panelOpen) return;
     toastEl.setAttribute('data-label', text);
     toastEl.className = 'wb-toast wb-show' + (k ? ' wb-' + k : '');
+    toastVisible = true;
     positionToast();
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.className = 'wb-toast'; }, 3500);
+    toastTimer = setTimeout(() => {
+      toastEl.className = 'wb-toast';
+      toastVisible = false;
+    }, 3500);
   }
 
   const initial = readRoomInfo();
@@ -691,7 +697,11 @@
 
   function positionToast() {
     const rect = anchorRect();
-    if (!rect) { toastEl.className = 'wb-toast'; return; }
+    if (!rect) {
+      toastEl.className = 'wb-toast';
+      toastVisible = false;
+      return;
+    }
     const W = viewportWidth();
     const width = Math.min(230, W - EDGE_MIN * 2);
     // 面板开着时把胶囊挪到面板上方，两块浮层不重叠
@@ -706,6 +716,7 @@
   function hideToast() {
     clearTimeout(toastTimer);
     toastEl.className = 'wb-toast';
+    toastVisible = false;
   }
 
   function showPanel() {
@@ -756,8 +767,22 @@
     if (event.key === 'Escape' && panelOpen) hidePanel();
   }, true);
 
-  window.addEventListener('resize', () => { positionPanel(); positionToast(); });
-  window.addEventListener('scroll', () => { positionPanel(); positionToast(); }, true);
+  // 滚动与缩放只在浮层可见时才需要重算位置。默认状态下两者都是隐藏的，
+  // 若不做早退，每次滚动都会 anchorRect() → querySelector + getBoundingClientRect，
+  // 而 getBoundingClientRect 会强制浏览器同步布局，滚动时每帧都做一遍是纯浪费。
+  // 同一帧内多次 scroll 事件也只合并成一次计算。
+  let viewportRaf = 0;
+  function onViewportChange() {
+    if (!panelOpen && !toastVisible) return;
+    if (viewportRaf) return;
+    viewportRaf = requestAnimationFrame(() => {
+      viewportRaf = 0;
+      if (panelOpen) positionPanel();
+      if (toastVisible) positionToast();
+    });
+  }
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('scroll', onViewportChange, true);
 
   // ---------------------------------------------------------------------------
   // 参数按直播间隔离：defaults 是未单独设置过的房间的默认值，byRoom[URL房间号] 覆盖它。
