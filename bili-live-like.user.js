@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.4.0
-// @description  在 B 站直播间原生点赞按钮上集成批量点赞，右键打开紧凑设置面板；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
+// @version      2.4.1
+// @description  在 B 站直播间原生点赞按钮上右键打开紧凑设置面板，点「开始」跑批量点赞（左键保持原生，不触发任务）；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
 // @match        https://live.bilibili.com/*
@@ -31,10 +31,10 @@
   // @grant none 时脚本直接跑在页面上下文，可直接读到 BilibiliLive
   const page = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
-  // === 行为配置：想换交互只改这一行，重新加载脚本即可 ===
-  // 'batch' = 左键点原生点赞按钮：原生 +1 照旧，同时自动跑完一批（推荐）
-  // 'panel' = 左键点原生点赞按钮：只弹出设置面板，由面板里的「开始」触发点赞
-  const CLICK_ACTION = 'batch';
+  // === 左键行为开关：默认关闭，左键完全交还给 B 站（只发生原生 +1）===
+  // 点赞任务只从右键面板里的「开始」按钮发起，避免误触连点或误加亲密度。
+  // 若哪天想恢复「左键顺手跑一批」，把下面改成 true 重新加载脚本即可。
+  const LEFT_CLICK_BATCH = false;
   // 原生点赞按钮：B 站 Web 端聊天输入栏上方工具栏里的「大拇指」。
   // 实测 DOM：<div class="like-btn not-clicked" data-event-name="dianzan.0.show" ...>
   // 写成多候选 + 事件委托，SPA 切房 / Vue 重渲染后无需重新绑定。
@@ -551,7 +551,7 @@
     <div class="wb-today"><span id="wb-today">本房 0 / 300</span><button type="button" class="wb-link" id="wb-reset" title="只清本房配额进度，当日累计统计保留">重置</button></div>
     <div class="wb-total" id="wb-total" role="button" tabindex="0" aria-expanded="false" title="当日所有直播间点赞总数，点击展开逐房间明细"><span>全站今日 <b class="wb-total-num" id="wb-total-num">0</b> 赞 <span class="wb-total-caret">▼</span></span><span><b id="wb-total-rooms">0</b> 间</span></div>
     <div class="wb-total-list" id="wb-total-list" hidden></div>
-    <div class="wb-btns"><button type="button" id="wb-start">开始</button><button type="button" id="wb-stop" disabled>停止</button></div>
+    <div class="wb-btns"><button type="button" id="wb-start" title="从这里发起点赞任务；左键点原生按钮不会触发">开始</button><button type="button" id="wb-stop" disabled>停止</button></div>
     <div class="wb-status" id="wb-status">待机</div>
   </div>`;
   // 只挂进 Shadow Root：面板文字与样式都留在隔离树里，不会泄漏到页面正文
@@ -795,18 +795,16 @@
     panel.classList.remove('wb-open');
   }
 
-  function togglePanel() {
-    if (panelOpen) hidePanel(); else showPanel();
+  // 左键默认完全不接管：脚本不挂监听、不阻止默认也不阻止冒泡，B 站原生 +1 照常发生，
+  // 但不会连带启动任何批量点赞任务。任务唯一入口是右键面板里的「开始」。
+  // 开关打开时才挂捕获监听（保留旧行为，便于随时恢复）。
+  if (LEFT_CLICK_BATCH) {
+    document.addEventListener('click', (event) => {
+      if (event.button !== 0 || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
+      if (!closestNative(event.target)) return;
+      run();
+    }, true);
   }
-
-  // 左键：不阻止默认、不阻止冒泡，原生 +1 照常发生，同时启动脚本的批量点赞。
-  // 按下修饰键时不接管，避免影响 Ctrl+点击等浏览器行为。
-  document.addEventListener('click', (event) => {
-    if (event.button !== 0 || event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
-    if (!closestNative(event.target)) return;
-    if (CLICK_ACTION === 'batch') run();
-    else togglePanel();
-  }, true);
 
   // 右键：弹出紧贴按钮的设置面板（不可拖动、不记位置）
   document.addEventListener('contextmenu', (event) => {
@@ -821,7 +819,9 @@
 
   document.addEventListener('click', (event) => {
     if (!panelOpen) return;
-    if (closestNative(event.target)) return; // 原生按钮交给上面的捕获监听
+    // 只有「左键接管」开着时，原生按钮才交给上面的捕获监听处理；
+    // 默认关闭时它就是普通的「面板外」，点它照常收起面板。
+    if (LEFT_CLICK_BATCH && closestNative(event.target)) return;
     hidePanel();
   });
 
@@ -989,7 +989,7 @@
     $(selector).addEventListener('change', saveConfig);
   });
 
-  console.log('[点赞助手] 已集成到原生点赞按钮：左键=自动完成一批点赞，右键=打开设置面板');
+  console.log('[点赞助手] 已集成到原生点赞按钮：左键=仅 B 站原生点赞（不接管），右键=打开设置面板，任务由面板「开始」发起');
 
   // ---------------------------------------------------------------------------
   // 自动任务：开关按「URL 房间号」分别记忆，未单独设置过的房间沿用 defaultEnabled
