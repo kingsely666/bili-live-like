@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站直播间点赞助手
 // @namespace    workbuddy.local/bili-like
-// @version      2.4.2
+// @version      2.4.3
 // @description  在 B 站直播间原生点赞按钮上右键打开紧凑设置面板，点「开始」按面板参数批量点赞；自动开关与次数按直播间分别记忆，开启自动后按钮冒泡提示；面板可切日间/夜间；统计当日全站点赞总数与逐房间明细；每日每房间 300 赞上限
 // @author       WorkBuddy
 // @license      MIT
@@ -35,10 +35,23 @@
   // 点赞任务只从右键面板里的「开始」按钮发起，避免误触连点或误加亲密度。
   // 若哪天想恢复「左键顺手跑一批」，把下面改成 true 重新加载脚本即可。
   const LEFT_CLICK_BATCH = false;
-  // 原生点赞按钮：B 站 Web 端聊天输入栏上方工具栏里的「大拇指」。
-  // 实测 DOM：<div class="like-btn not-clicked" data-event-name="dianzan.0.show" ...>
-  // 写成多候选 + 事件委托，SPA 切房 / Vue 重渲染后无需重新绑定。
-  const NATIVE_LIKE_SELECTOR = '.like-btn, [data-event-name="dianzan.0.show"], [data-type^="dianzan."]';
+  // 原生点赞按钮：B 站把「大拇指」放进聊天输入栏右侧的图标组（.icon-right-part），
+  // 且改版时会调整图标顺序、类名与尺寸，所以这里不认死某一个 class。
+  // 按可靠度从高到低列候选：埋点属性 > 传统 class > 新版类名 > 无障碍文案。
+  // 事件挂在 document 上做委托，Vue 重渲染 / SPA 切房后无需重新绑定。
+  const NATIVE_SELECTORS = [
+    '[data-type^="dianzan."]',
+    '[data-event-name^="dianzan."]',
+    '.like-btn',
+    '[class*="like-btn"]',
+    '[class*="like-icon"]',
+    '[aria-label*="点赞"],[aria-label*="点贊"]',
+    '[title*="点赞"],[title*="点贊"]',
+    '.icon-like,.btn-like,#like-btn',
+    // 末位兜底：改版后类名完全换掉时，仍能从 class 里的 like / dianzan 字样认出来
+    '[class*="like"]',
+    '[class*="dianzan"]'
+  ];
   // 配置：defaults 是新房间的默认值，byRoom[roomId] 是各直播间自己的设置
   const CFG_KEY = 'wb-bili-like-config';
   const DEFAULT_CFG = { times: '10', per: '30', delay: '1000' };
@@ -665,16 +678,47 @@
   const viewportWidth = () => window.innerWidth;
   const viewportHeight = () => window.innerHeight;
 
-  // 定位时优先精确 class，再退到 data 属性（均来自真实页面 DOM）
-  function nativeBtn() {
-    return document.querySelector('.like-btn')
-      || document.querySelector('[data-event-name="dianzan.0.show"]')
-      || document.querySelector(NATIVE_LIKE_SELECTOR);
+  // 点赞图标现在是 24×24 的小按钮，页面上还同时存在 like-moment-animation 之类的动画层、
+  // 以及「XX点赞」的统计文字。只接受「可见、有实际尺寸、非装饰」的元素。
+  function isUsableNative(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const cls = (typeof el.className === 'string') ? el.className : '';
+    if (/moment|animation|heat-index|dislike/i.test(cls)) return false;
+    if (typeof el.getBoundingClientRect !== 'function') return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8 || r.width > 240 || r.height > 240) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0';
   }
 
+  // 页面改版会换类名、换图标顺序，按候选优先级实时找「现在页面上真正在用的那个」按钮。
+  let cachedNative = null;
+  function findNativeNow() {
+    for (const sel of NATIVE_SELECTORS) {
+      let list;
+      try { list = document.querySelectorAll(sel); } catch (_) { continue; }
+      for (const el of list) if (isUsableNative(el)) return el;
+    }
+    return null;
+  }
+
+  // 缓存 + document.contains：Vue 换掉按钮节点后下一次调用立即重找；
+  // 命中时只做一次 contains，不在滚动路径上触碰布局。
+  function nativeBtn() {
+    if (cachedNative && document.contains(cachedNative)) return cachedNative;
+    cachedNative = findNativeNow();
+    return cachedNative;
+  }
+
+  // 右键可能落在按钮内部的 svg / path 上，逐级向上找祖先；同样过滤装饰节点。
   function closestNative(target) {
     if (!target || typeof target.closest !== 'function') return null;
-    try { return target.closest(NATIVE_LIKE_SELECTOR); } catch (error) { return null; }
+    for (const sel of NATIVE_SELECTORS) {
+      let el;
+      try { el = target.closest(sel); } catch (_) { continue; }
+      if (isUsableNative(el)) return el;
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -700,8 +744,10 @@
       'box-shadow:0 0 7px rgba(251,114,153,.6);',
       'animation:wb-like-bubble 1.5s cubic-bezier(.25,.7,.35,1) infinite;',
       'will-change:transform,opacity}',
-      '[data-wb-auto="on"]::before{left:19%!important}',
-      '[data-wb-auto="on"]::after{left:31%!important;animation-delay:.75s}',
+      // 用百分比定位，图标换成 24×24 或带数字的大按钮都能落在图标中部偏上，
+      // 不会像固定像素那样挤到左上角；两颗气泡左右错开、动画差半拍。
+      '[data-wb-auto="on"]::before{left:41%!important}',
+      '[data-wb-auto="on"]::after{left:62%!important;animation-delay:.75s}',
       '@keyframes wb-like-bubble{',
       '0%{transform:translateY(5px) scale(.45);opacity:0}',
       '15%{transform:translateY(0) scale(1);opacity:.95}',
@@ -733,9 +779,15 @@
 
   function anchorRect() {
     const btn = nativeBtn();
-    if (!btn || typeof btn.getBoundingClientRect !== 'function') return null;
-    const rect = btn.getBoundingClientRect();
-    return (rect.width > 0 && rect.height > 0) ? rect : null;
+    if (btn && typeof btn.getBoundingClientRect === 'function') {
+      const rect = btn.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return rect;
+    }
+    // 页面改版后若暂时找不到按钮，用视口右下角兜底：
+    // 否则 placeAbove 直接返回 false，浮层会留在 (0,0) 跑到页面左上角。
+    const W = viewportWidth();
+    const H = viewportHeight();
+    return { left: W - 40, right: W - 8, top: H - 60, bottom: H - 40, width: 32, height: 20 };
   }
 
   // 浮层水平居中对齐原生按钮，优先摆在按钮上方；上方空间不够就翻到下方，并夹在视口内。
@@ -1494,10 +1546,27 @@
   if (autoEnabled(roomIdFromUrl())) scheduleAuto(0);
 
   let lastPath = location.pathname;
+  let lastAnchorKey = '';
   setInterval(() => {
     cleanupStaleDom();
+    // 改版会换类名、挪图标位置，Vue 也会随时重建按钮节点：这里每秒重认一次锚点。
+    // 节点被替换或矩形变化时，气泡标记与浮层一起挪到新位置，无需刷新页面。
+    const prevNative = cachedNative;
+    const anchor = findNativeNow();
+    cachedNative = anchor;
+    const anchorChanged = anchor !== prevNative || (prevNative && !document.contains(prevNative));
     // Vue 切房重建聊天栏后，按钮是新节点、标记会丢，这里补回；状态没变则不写 DOM
     syncNativeBadge();
+    let key = '';
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      key = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)].join(',');
+    }
+    if (anchorChanged || key !== lastAnchorKey) {
+      lastAnchorKey = key;
+      positionPanel();
+      positionToast();
+    }
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
 
